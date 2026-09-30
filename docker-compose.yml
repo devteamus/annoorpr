@@ -1,0 +1,110 @@
+# আন-নূর — অ্যাপ + PostgreSQL একসাথে (একটাই Docker Compose স্ট্যাক)
+#
+# Coolify-তে: এই ফাইলটা দিয়ে একটাই রিসোর্স তৈরি হবে — আলাদা ডেটাবেস
+# বানানো/কানেক্ট করা লাগবে না। সাধারণ VPS-এ: docker compose up -d --build
+#
+# চালুর আগে .env ফাইল বানান (.env.example দেখুন) — অন্তত POSTGRES_PASSWORD,
+# ADMIN_EMAIL, ADMIN_PASSWORD, AUTH_SECRET অবশ্যই সেট করুন।
+
+services:
+  # ---- PostgreSQL (শুধু অভ্যন্তরীণ নেটওয়ার্ক — বাইরে থেকে পাওয়া যায় না) ----
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-annoor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_DB: ${POSTGRES_DB:-annoora}
+    # কনজারভেটিভ টিউনিং — VPS-এ db কনটেইনারকে ১GB মেমরি লিমিটের মধ্যে
+    # রাখা হচ্ছে (নিচের deploy.resources দেখুন), তার সাথে মিলিয়ে:
+    #  - max_connections=60: app-এর connection_limit (নিচে DATABASE_URL-এ
+    #    ১০) + admin/psql ডিবাগিং-এর জন্য যথেষ্ট মার্জিন, ডিফল্ট (100) থেকে
+    #    কম রাখলে প্রতি কানেকশনের মেমরি ওভারহেড কমে
+    #  - shared_buffers=256MB (~২৫% of ১GB limit, Postgres-এর প্রচলিত
+    #    সুপারিশ), effective_cache_size=768MB (planner hint, actual
+    #    allocation না), work_mem=4MB (কনকারেন্ট সর্ট/হ্যাশে মেমরি স্পাইক
+    #    এড়াতে রক্ষণশীল রাখা — ডিফল্ট 4MB-ই, স্পষ্ট করে বসানো হলো)
+    command:
+      - postgres
+      - -c
+      - max_connections=60
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - work_mem=4MB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-annoor} -d $${POSTGRES_DB:-annoora}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    # ইচ্ছা করলে বাদ দিয়ে দিন না — ports সেকশন নেই মানেই ইন্টারনেট থেকে
+    # ডেটাবেসে ঢোকা অসম্ভব, শুধু app কনটেইনার থেকেই যোগ করা যায়।
+    #
+    # ⚠️ এই VPS-এ অন্য অ্যাপও চলে (8GB RAM / 4 vCPU শেয়ার্ড) — তাই db
+    # কখনো পুরো সার্ভার খেয়ে ফেলতে না পারে, একটা হার্ড লিমিট বসানো (modern
+    # `docker compose` non-swarm মোডেও deploy.resources.limits মানে,
+    # v2.13.0+ থেকে)। এটা একটা রক্ষণশীল শুরুর পয়েন্ট — load test দেখে
+    # প্রয়োজনে বাড়ান।
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+  # ---- আন-নূর Next.js অ্যাপ ----
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # compose নিজেই ডেটাবেস URL বানিয়ে দেয় — এটা বদলাতে হবে না।
+      # connection_limit=10: এই একটা app instance-এর Prisma pool সর্বোচ্চ
+      # ১০টা কানেকশন খুলবে (ডিফল্ট ফর্মুলা num_cpus*2+1 হলে অনির্দিষ্ট হয়ে
+      # যেত) — db-র max_connections=60-এর সাথে মিলিয়ে বসানো, future-এ
+      # replica বাড়ালে হিসাব করে বাড়াতে হবে (replica সংখ্যা × ১০ < ৬০)।
+      # pool_timeout=10: পুল খালি থাকলে ১০ সেকেন্ড ওয়েট করে এরর দেবে, না
+      # হলে ডিফল্ট timeout না থাকায় রিকোয়েস্ট অনির্দিষ্টকাল আটকে থাকতে পারত।
+      DATABASE_URL: postgresql://${POSTGRES_USER:-annoor}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-annoora}?connection_limit=10&pool_timeout=10
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      # অ্যাডমিন সেশন সাইনিং সিক্রেট (বানানোর কমান্ড .env.example-এ আছে)
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      # প্রথম বুটে admin অ্যাকাউন্ট এই তথ্যে তৈরি হবে
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      # সাইটের পাবলিক URL — canonical/OG/sitemap-এ ব্যবহৃত হয়
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-https://annoor.xyz}
+    # host port publish (ports:) ইচ্ছাকৃতভাবে বাদ — Coolify নিজের Traefik
+    # প্রক্সি দিয়ে অ্যাপে যোগ করে (domain-এর মাধ্যমে, internal "coolify"
+    # নেটওয়ার্ক দিয়ে); সরাসরি host port bind করলে VPS-এর অন্য app-এর সাথে
+    # port conflict হতে পারে (যেমনটা হয়েছিল — "port is already allocated")
+    expose:
+      - "3000"
+    # একই VPS-এর অন্য অ্যাপগুলোর জন্য RAM/CPU বাঁচিয়ে রাখতে রক্ষণশীল
+    # লিমিট — Node.js single process, তাই ১ vCPU-র বেশি দিলেও একাই সবটা
+    # ব্যবহার করতে পারবে না (মাল্টি-কোর দরকার হলে নিচের নোট দেখুন)।
+    # load test-এর ফলাফল দেখে সংখ্যা বাড়ান/কমান — অনুমান করে বসানো, এখনো
+    # যাচাই করা হয়নি।
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1.5G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+volumes:
+  pgdata:
+    # এখানেই সব ব্লগ/বই/ভিউ-কাউন্ট ডেটা থাকবে — রিডিপ্লয়ে হারাবে না

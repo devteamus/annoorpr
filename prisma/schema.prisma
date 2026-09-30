@@ -1,0 +1,136 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Admin {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String   // scrypt-hashed
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model BlogCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  slug      String   @unique
+  blogs     Blog[]
+  createdAt DateTime @default(now())
+}
+
+model Blog {
+  id              String    @id @default(cuid())
+  title           String
+  slug            String    @unique
+  content         String    // HTML content
+  excerpt         String    // auto-generated short summary
+  metaTitle       String    // auto from title
+  metaDescription String    // auto from content
+  featureImage    String?
+  published       Boolean   @default(true)
+  scheduledAt     DateTime? // when to publish (null = immediate)
+  views           Int       @default(0)
+  categoryId      String?
+  category        BlogCategory? @relation(fields: [categoryId], references: [id])
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  viewLogs        BlogViewLog[]
+  shares          BlogShare[]
+
+  @@index([categoryId])
+  @@index([createdAt])
+  @@index([scheduledAt])
+  // ব্লগ লিস্টিং-এর সবচেয়ে গরম কোয়েরি: "published পোস্ট, createdAt দিয়ে
+  // sort" — আলাদা published আর createdAt ইনডেক্স মিলিয়ে প্ল্যানার bitmap-AND
+  // করত; এই কম্পোজিট ইনডেক্স একবারেই কভার করে (index-only scan সম্ভব)
+  @@index([published, createdAt])
+}
+
+// Daily aggregated view counts per blog — powers the analytics charts
+model BlogViewLog {
+  id        String   @id @default(cuid())
+  blogId    String
+  blog      Blog     @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  date      String   // YYYY-MM-DD (day bucket)
+  count     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([blogId, date])
+  @@index([date])
+}
+
+// শেয়ার কাউন্ট — কোন নেটওয়ার্কে কতবার শেয়ার হয়েছে (দৈনিক বাকেট)
+model BlogShare {
+  id        String   @id @default(cuid())
+  blogId    String
+  blog      Blog     @relation(fields: [blogId], references: [id], onDelete: Cascade)
+  network   String   // facebook | whatsapp | chatgpt | gemini | copy | native
+  date      String   // YYYY-MM-DD (day bucket)
+  count     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([blogId, network, date])
+  @@index([blogId])
+  @@index([date])
+}
+
+// সাইট-wide ভিজিটর কাউন্টার — দৈনিক বাকেট (ফুটারে মোট + আজকের দেখায়)
+model SiteVisit {
+  id        String   @id @default(cuid())
+  date      String   @unique // YYYY-MM-DD
+  count     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Islamic Books Shop — product cards from rokomari product IDs
+model ShopProduct {
+  id            String   @id @default(cuid())
+  productId     String
+  title         String
+  image         String?
+  price         String?
+  productUrl    String
+  affiliateUrl  String
+  active        Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([active, sortOrder])
+}
+
+// Blog sidebar affiliate products (rokomari.com)
+model AffiliateProduct {
+  id        String   @id @default(cuid())
+  url       String
+  category  String   // "food" | "book"
+  title     String
+  image     String?
+  price     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+}
+
+// Global affiliate settings (affId, affs, cma)
+model AffiliateSetting {
+  id        String   @id @default(cuid())
+  affId     String   @default("")
+  affs      String   @default("")
+  cma       String   @default("")
+  updatedAt DateTime @updatedAt
+}

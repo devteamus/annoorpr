@@ -1,0 +1,7 @@
+// /after-prayer — (সার্ভার-রেন্ডার্ড, indexable)
+import { makeCategoryPage } from "@/lib/category-page";
+
+const { Page, metadata: pageMetadata } = makeCategoryPage("after-prayer");
+
+export default Page;
+export const metadata = pageMetadata;
