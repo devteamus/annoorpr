@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import {
   buildUrlSet,
   xmlResponse,
+  withTimeout,
   type SitemapUrl,
 } from "@/lib/sitemap-xml";
 
@@ -27,13 +28,13 @@ export function postSitemapHandler(fileNo: number) {
   return async function GET() {
     let urls: SitemapUrl[] = [];
     try {
-      const blogs = await db.blog.findMany({
+      const blogs = await withTimeout(db.blog.findMany({
         where: liveWhere(),
         select: { slug: true, updatedAt: true, title: true, featureImage: true },
         orderBy: { createdAt: "desc" },
         skip: (fileNo - 1) * POSTS_PER_FILE,
         take: POSTS_PER_FILE,
-      });
+      }));
       urls = blogs.map((b) => ({
         loc: `${BASE_URL}/blog/${encodeURIComponent(b.slug)}`,
         lastmod: b.updatedAt,
