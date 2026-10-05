@@ -72,3 +72,16 @@ export function xmlResponse(xml: string): Response {
     },
   });
 }
+
+// DB হ্যাং করলে সাইটম্যাপ যেন ঝুলে না থাকে — ৫ সেকেন্ডে timeout, তখন catch ব্লকের
+// fallback (খালি/আংশিক কিন্তু valid XML) ফেরত যায়। Googlebot লম্বা সময় অপেক্ষা করে না →
+// না হলে Search Console-এ "Couldn't fetch" আসে।
+export function withTimeout<T>(p: Promise<T>, ms = 5000): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("sitemap db timeout")), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); }
+    );
+  });
+}
