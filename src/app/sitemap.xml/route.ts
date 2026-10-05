@@ -1,7 +1,7 @@
 // /sitemap.xml — Sitemap Index
 // স্ট্রাকচার: পোস্ট সাইটম্যাপ (১০ ফাইল × ১,০০০) → ক্যাটাগরি → পেজ
 import { db } from "@/lib/db";
-import { buildSitemapIndex, xmlResponse } from "@/lib/sitemap-xml";
+import { buildSitemapIndex, xmlResponse, withTimeout } from "@/lib/sitemap-xml";
 import { POSTS_PER_FILE, MAX_POST_FILES, liveWhere } from "@/lib/post-sitemap";
 
 export const dynamic = "force-dynamic";
@@ -17,10 +17,10 @@ export async function GET() {
   let postCount = 0;
   let lastmod: Date = now;
   try {
-    const [count, agg] = await Promise.all([
+    const [count, agg] = await withTimeout(Promise.all([
       db.blog.count({ where: liveWhere() }),
       db.blog.aggregate({ where: liveWhere(), _max: { updatedAt: true } }),
-    ]);
+    ]));
     postCount = count;
     if (agg._max.updatedAt) lastmod = agg._max.updatedAt;
   } catch {
